@@ -3,3 +3,5 @@ audio/
 *.json
 *.faiss
 user_uploads/
+__pycache__/
+*.log
