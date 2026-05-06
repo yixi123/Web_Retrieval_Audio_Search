@@ -1,0 +1,5 @@
+audio/
+*.pt
+*.json
+*.faiss
+user_uploads/
