@@ -9,6 +9,9 @@ from flask import Flask, Response, jsonify, render_template, request, send_from_
 from flask import send_file
 from werkzeug.utils import secure_filename
 
+os.environ["HF_DATASETS_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
 from audio_indexing import (
     index_audio_file,
     semantic_search_audio,
@@ -232,7 +235,7 @@ def upload():
 def index_user_session():
     data = request.get_json(force=True) or {}
     session_id = data.get('session_id')
-    files_to_index = data.get('files_to_index', [])  # List of filenames to index specifically
+    
     if not session_id:
         return jsonify({'error': 'missing session_id'}), 400
 
@@ -240,17 +243,15 @@ def index_user_session():
     if not os.path.exists(session_dir):
         return jsonify({'error': 'session not found'}), 404
 
-    # Always check what's already indexed to avoid duplicates
     already_indexed = {os.path.abspath(path) for path in get_indexed_files(metadata_path=metadata_path)}
     
-    if files_to_index:
-        # Only index the specific files that were just uploaded
+    # FIX 1: Check if the key exists in the data payload, not if it's truthy
+    if 'files_to_index' in data:
         audio_files = [
             os.path.join(session_dir, name)
-            for name in files_to_index
+            for name in data['files_to_index']
             if os.path.isfile(os.path.join(session_dir, name)) and allowed(name)
         ]
-        # Filter out already indexed files even from the specific list
         audio_files = [path for path in audio_files if os.path.abspath(path) not in already_indexed]
     else:
         # Fallback: index all unindexed files in the session
@@ -266,13 +267,19 @@ def index_user_session():
         total = len(audio_files)
         yield json.dumps({'type': 'start', 'total': total}) + '\n'
         indexed_files = []
+        
         for index, audio_path in enumerate(audio_files, start=1):
-            index_audio_file(audio_path, index_name=index_name, metadata_path=metadata_path, verbose=False)
-            indexed_files.append({
-                'file_id': str(uuid.uuid4()),
-                'path': audio_path,
-                'filename': os.path.basename(audio_path),
-            })
+            # FIX 2: Capture the result to verify successful indexing
+            result = index_audio_file(audio_path, index_name=index_name, metadata_path=metadata_path, verbose=False)
+            
+            if result is not None:
+                indexed_files.append({
+                    'file_id': str(uuid.uuid4()),
+                    'path': audio_path,
+                    'filename': os.path.basename(audio_path),
+                })
+                
+            # Yield progress to keep the UI bar moving, even if the file failed
             yield json.dumps({
                 'type': 'progress',
                 'current': index,
@@ -283,7 +290,8 @@ def index_user_session():
         yield json.dumps({
             'type': 'done',
             'session_id': session_id,
-            'indexed_count': total,
+            # FIX 3: Return the actual successful count, not the total attempted
+            'indexed_count': len(indexed_files),
             'session_total_files': len([name for name in os.listdir(session_dir) if os.path.isfile(os.path.join(session_dir, name)) and allowed(name)]),
             'files': indexed_files,
         }) + '\n'
@@ -414,13 +422,7 @@ def clear_user():
                 pass
     return jsonify({'ok': True})
 
-
-@app.route('/api/shutdown', methods=['POST', 'GET'])
-def shutdown():
-    return jsonify({'ok': False, 'error': 'use the notebook shutdown cell'}), 400
-
-
-def run_server(host='127.0.0.1', port=5000):
+def run_server(host='0.0.0.0', port=5000):
     app.run(host=host, port=port, debug=False, use_reloader=False)
 
 

@@ -97,6 +97,18 @@ def split_audio_into_segments(audio: np.ndarray) -> tuple[np.ndarray, np.ndarray
     segment_samples = int(SEGMENT_DURATION * SAMPLE_RATE)
     segments = []
     timestamps = []
+
+    # Handle short audio files (less than 1 second)
+    if len(audio) < segment_samples:
+        # Calculate RMS on original audio before padding to accurately check for silence
+        rms = librosa.feature.rms(y=audio)[0].mean()
+        if rms >= 0.005: 
+            # Pad the end with zeros to meet the 1-second requirement
+            padded_audio = np.pad(audio, (0, segment_samples - len(audio)), mode='constant')
+            segments.append(padded_audio)
+            # Record the actual length of the sound for the metadata timestamp
+            timestamps.append((0.0, len(audio) / SAMPLE_RATE))
+        return np.array(segments), np.array(timestamps)
     
     for i in range(0, len(audio) - segment_samples, segment_samples // 2):
         segment = audio[i:i+segment_samples]
